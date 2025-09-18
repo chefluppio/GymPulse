@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Simulatore Palestra - MET + Peso</title>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&display=swap" rel="stylesheet">
+  <style>
+    :root{
+      --bg1:#0b0f17;
+      --card:#16191f;
+      --accent1:#ff3b3f;
+      --accent2:#00e0ff;
+      --accent3:#00ff88;
+    }
+    html,body{height:100%;margin:0;font-family:'Orbitron',sans-serif;background:linear-gradient(160deg,var(--bg1),#0f1216 40%);}
+    .wrap{max-width:460px;margin:18px auto;padding:18px;}
+    header{color:var(--accent1);text-align:center;margin-bottom:12px;font-size:1.6rem;text-shadow:0 0 12px rgba(255,59,63,.25)}
+    .card{background:var(--card);border-radius:14px;padding:16px;box-shadow:0 8px 30px rgba(0,0,0,.6);}
+    label{display:block;margin-top:8px;color:var(--accent2);font-size:0.95rem}
+    input,select{width:100%;padding:12px;margin-top:6px;border-radius:8px;border:2px solid rgba(0,224,255,.12);background:#0b0f14;color:#fff;font-size:1rem;box-sizing:border-box}
+    .row{display:flex;gap:8px}
+    .row > *{flex:1}
+    .small{font-size:0.9rem;padding:8px}
+    .btn{margin-top:12px;padding:12px;border-radius:10px;border:none;width:100%;font-weight:700;background:linear-gradient(90deg,var(--accent1),#ff7b00);color:#fff;font-size:1rem;cursor:pointer;box-shadow:0 8px 24px rgba(255,59,63,.18)}
+    .result{margin-top:14px;background:linear-gradient(180deg,#0f1418,#0b0f12);padding:12px;border-radius:10px;color:var(--accent3);font-size:0.98rem;text-align:left}
+    .muted{color:#9aa6b2;font-size:0.85rem;margin-top:8px}
+    @media (max-width:480px){
+      .wrap{padding:10px}
+      header{font-size:1.3rem}
+    }
+    .note{font-size:0.85rem;color:#9aa6b2;margin-top:8px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>💪 Simulatore Palestra — MET + Peso</header>
+    <div class="card">
+      <label for="pesoCorp">Peso corporeo (kg)</label>
+      <input id="pesoCorp" type="number" min="30" max="250" value="75">
+
+      <label for="exercise">Esercizio</label>
+      <select id="exercise" onchange="onExerciseChange()">
+        <option value="panca">Panca piana (sollevamento)</option>
+        <option value="squat">Squat / Sollevamento pesante</option>
+        <option value="addominali">Addominali / Calisthenics</option>
+        <option value="corsa">Corsa (min in input)</option>
+      </select>
+
+      <label for="intensity">Intensità</label>
+      <select id="intensity">
+        <option value="light">Leggero</option>
+        <option value="moderate" selected>Moderato</option>
+        <option value="intense">Intenso</option>
+      </select>
+
+      <div class="row">
+        <div>
+          <label for="sets">Serie</label>
+          <input id="sets" type="number" min="1" value="3">
+        </div>
+        <div>
+          <label for="reps">Ripetizioni (o minuti per corsa)</label>
+          <input id="reps" type="number" min="1" value="10">
+        </div>
+      </div>
+
+      <div id="pesoBlock">
+        <label for="pesoLift">Peso sollevato per rip (kg)</label>
+        <input id="pesoLift" type="number" min="0" value="60">
+        <label for="rom">Escursione per rip (m) — ROM</label>
+        <input id="rom" type="number" step="0.01" min="0.05" value="0.50">
+      </div>
+
+      <label for="restSec">Riposo tra serie (secondi)</label>
+      <input id="restSec" type="number" min="0" value="60">
+
+      <button class="btn" onclick="calcola()">Calcola</button>
+
+      <div id="output" class="result" style="display:none"></div>
+      <div class="note">
+        Formula principale: <code>calorie_MET = (MET × 3.5 × peso_kg × tempo_min) / 200</code>.<br>
+        Lavoro meccanico: <code>W = peso_sollevato_kg × 9.80665 × ROM_m × totale_rip</code> (J). Kcal meccaniche = W / eff / 4184 (efficienza muscolare ≈ 0.25).<br>
+        Il valore MET è l'indicazione primaria. Il lavoro meccanico è mostrato come riferimento/controllo e per tracciare il volume. Non sommare direttamente MET + lavoro meccanico (double counting).
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // costanti
+    const g = 9.80665;              // m/s^2
+    const J_PER_KCAL = 4184;
+    const MUSCLE_EFF = 0.25;        // efficienza muscolare usata per convertire lavoro meccanico -> calorie metaboliche
+
+    function onExerciseChange(){
+      const ex = document.getElementById('exercise').value;
+      const pesoBlock = document.getElementById('pesoBlock');
+      const rom = document.getElementById('rom');
+      const pesoLift = document.getElementById('pesoLift');
+
+      if(ex === 'panca'){
+        pesoBlock.style.display = 'block';
+        rom.value = rom.value || 0.50;
+      } else if(ex === 'squat'){
+        pesoBlock.style.display = 'block';
+        rom.value = rom.value || 0.60;
+      } else {
+        // corsa, addominali: nascondi peso sollevato
+        pesoBlock.style.display = 'none';
+      }
+    }
+
+    // mapping realistico MET / secPerRep per esercizio e intensità
+    function getParams(exercise, intensity){
+      // ritorna {MET, secPerRep, defaultRom}
+      if(exercise === 'panca'){
+        if(intensity === 'light') return {MET:3.0, secPerRep:3, defaultRom:0.50};
+        if(intensity === 'moderate') return {MET:3.5, secPerRep:4, defaultRom:0.50};
+        return {MET:5.5, secPerRep:5, defaultRom:0.50}; // intenso
+      }
+      if(exercise === 'squat'){
+        if(intensity === 'light') return {MET:4.5, secPerRep:3, defaultRom:0.60};
+        if(intensity === 'moderate') return {MET:6.0, secPerRep:4, defaultRom:0.60};
+        return {MET:7.0, secPerRep:5, defaultRom:0.70};
+      }
+      if(exercise === 'addominali'){
+        if(intensity === 'light') return {MET:2.8, secPerRep:2, defaultRom:0.30};
+        if(intensity === 'moderate') return {MET:3.8, secPerRep:3, defaultRom:0.30};
+        return {MET:4.5, secPerRep:4, defaultRom:0.35};
+      }
+      // corsa: reps = minuti
+      if(exercise === 'corsa'){
+        if(intensity === 'light') return {MET:7.0, secPerRep:60, defaultRom:0}; // secPerRep non usato, reps = minuti
+        if(intensity === 'moderate') return {MET:8.3, secPerRep:60, defaultRom:0};
+        return {MET:11.5, secPerRep:60, defaultRom:0};
+      }
+      // fallback
+      return {MET:4.0, secPerRep:3, defaultRom:0.4};
+    }
+
+    function calcola(){
+      // raccolta input
+      const pesoCorp = parseFloat(document.getElementById('pesoCorp').value) || 0;
+      const exercise = document.getElementById('exercise').value;
+      const intensity = document.getElementById('intensity').value;
+      const sets = Math.max(1, parseInt(document.getElementById('sets').value) || 1);
+      const repsInput = Math.max(1, parseInt(document.getElementById('reps').value) || 1);
+      const restSec = Math.max(0, parseFloat(document.getElementById('restSec').value) || 0);
+
+      const params = getParams(exercise, intensity);
+      let totalReps = 0;
+      let totalTimeMin = 0;
+
+      if(exercise === 'corsa'){
+        // qui 'repsInput' è minuti di corsa
+        totalTimeMin = repsInput;
+        totalReps = 0;
+      } else {
+        totalReps = sets * repsInput;
+        const secPerRep = params.secPerRep;
+        const workSec = totalReps * secPerRep;
+        const restTotal = restSec * (sets - 1);
+        totalTimeMin = (workSec + restTotal) / 60;
+      }
+
+      // calorie stimate via MET (formula ufficiale)
+      const calorieMET = (params.MET * 3.5 * pesoCorp * totalTimeMin) / 200;
+
+      // calcoli per peso sollevato (solo se previsto)
+      let pesoLift = 0;
+      let rom = 0;
+      let volume = 0;
+      let workJ = 0;
+      let kcalFromWork = 0;
+      if(exercise === 'panca' || exercise === 'squat'){
+        pesoLift = Math.max(0, parseFloat(document.getElementById('pesoLift').value) || 0);
+        rom = Math.max(0, parseFloat(document.getElementById('rom').value) || params.defaultRom);
+        volume = pesoLift * totalReps; // kg totale sollevati
+        // lavoro meccanico (J) = forza (kg * g) * spostamento (m) * ripetizioni
+        workJ = pesoLift * g * rom * totalReps;
+        // converti in kcal tenendo conto dell'efficienza muscolare
+        kcalFromWork = workJ / MUSCLE_EFF / J_PER_KCAL;
+      }
+
+      // output formattato
+      const out = document.getElementById('output');
+      out.style.display = 'block';
+      out.innerHTML = `
+        <strong>Risultato</strong><br>
+        • Tempo totale stimato: <b>${totalTimeMin.toFixed(2)} min</b><br>
+        • Calorie (stima MET): <b>${calorieMET.toFixed(1)} kcal</b><br>
+        ${ (exercise === 'panca' || exercise === 'squat') ? 
+          `• Volume (kg totale sollevati): <b>${volume.toLocaleString()}</b> kg<br>
+           • Lavoro meccanico: <b>${workJ.toFixed(0)}</b> J → ≈ <b>${kcalFromWork.toFixed(2)}</b> kcal (stima da lavoro meccanico, eff=${(MUSCLE_EFF*100).toFixed(0)}%)<br>
+           • Nota: la stima MET è quella principale; il valore meccanico è un controllo/indicatore di volume (non sommare).` 
+           : ''
+        }
+      `;
+
+      // spiegazione sommaria ma netta
+      const note = document.createElement('div');
+      note.className = 'muted';
+      note.innerHTML = `
+        Spiegazione: calorie basate su MET (formula clinica). Lavoro meccanico calcolato come peso×g×ROM×ripetizioni e convertito considerando ~25% di efficienza muscolare.
+      `;
+      // rimuovo vecchie note se presenti
+      const existingNote = out.querySelector('.muted');
+      if(existingNote) existingNote.remove();
+      out.appendChild(note);
+    }
+
+    // inizializza visibilità
+    onExerciseChange();
+  </script>
+</body>
+</html>
